@@ -3,284 +3,157 @@ module QCParser (parseQC, parseQC') where
 import Control.Monad
 import Data.Char
 import Data.List
+{-
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+-}
+
+--import Text.Parsec.Number
+
+import Data.Map.Strict (Map, (!))
+import qualified Data.Map.Strict as MS
 import qualified Data.Set as Set
-import GateStruct
+import qualified GateStruct as GS
 import System.Environment
---import Control.Applicative
+import Text.Parsec hiding (space)
+import Text.Parsec.Char hiding (space)
 
-import Text.ParserCombinators.ReadP
+type GName = String
 
-next_word :: ReadP String
-next_word = many $ satisfy (`notElem` " \n\r")
+type GWire = String
 
-qGate :: [String] -> ReadP Gate
-qGate s =
-  qCCZ s
-    <++ qtof2 s
-    --  <++ ( qCnot1 s)
-    <++ qCnot3 s
-    <++ qX s
-    --  <++ ( qNot s)
-    <++ qZ s
-    <++ qT s
-    <++ qH s
-    <++ qS s
+data Gate = Gate GName [GWire] deriving (Eq, Show, Ord)
 
-qS s = do
-  skipSpaces
-  string "S"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (S (unJust (target `elemIndex` s)))
+data DotTfc = DotTfc
+  { qubits :: [GWire],
+    inputs :: [GWire],
+    outputs :: [GWire],
+    glist :: [Gate]
+  }
+
+instance Show DotTfc where
+  show (DotTfc q i o glist) = intercalate "\n" (q' : i' : o' : bod)
+    where
+      q' = ".v " ++ showLst q
+      i' = ".i " ++ showLst (filter (`elem` i) q)
+      o' = ".o " ++ showLst (filter (`elem` o) q)
+      bod = map show glist
+      showLst = intercalate ","
+
+{- Parser -}
+
+space = char ' '
+
+comma = char ','
+
+semicolon = char ';'
+
+sep = space <|> tab <|> comma
+
+comment = char '#' >> manyTill anyChar endOfLine >> return '#'
+
+delimiter = semicolon <|> endOfLine
+
+skipSpace = skipMany $ sep <|> comment
+
+skipWithBreak = many1 (skipMany sep >> delimiter >> skipMany sep)
+
+parseID = try $ do
+  c <- letter
+  cs <- many (alphaNum <|> char '*')
+  if (c : cs) == "BEGIN" || (c : cs) == "END" then fail "" else return (c : cs)
+
+parseParams = sepEndBy (many1 alphaNum) (many1 sep)
+
+{-
+parseDiscrete = do
+  numerator <- option 1 nat
+  string "pi"
+  string "/2^"
+  power <- int
+  return $ Discrete $ dyadic numerator (power+1)
+
+parseContinuous = floating2 True >>= return . Continuous
+
+parseAngle = do
+  char '('
+  theta <- sign <*> (parseDiscrete <|> parseContinuous)
+  char ')'
+  return theta
+-}
+
+parseGate = do
+  name <- parseID
+  --  param <- optionMaybe parseAngle
+  --  reps <- option 1 (char '^' >> nat)
+  skipSpace
+  params <- parseParams
+  skipSpace
+  return $ Gate name params
+
+parseCir = do
+  string "BEGIN"
+  skipSpace
+  id <- option "main" (try parseID)
+  skipSpace
+  skipWithBreak
+  body <- endBy parseGate skipWithBreak
+  string "END"
+  return body
+
+parseHeaderLine s = do
+  string s
+  skipSpace
+  params <- parseParams
+  skipWithBreak
+  return params
+
+parseFile = do
+  skipMany $ sep <|> comment <|> delimiter
+  qubits <- parseHeaderLine ".v"
+  inputs <- option qubits $ try $ parseHeaderLine ".i"
+  outputs <- option qubits $ try $ parseHeaderLine ".o"
+  option qubits $ try $ parseHeaderLine ".c"
+  option qubits $ try $ parseHeaderLine ".ov"
+  cir <- sepEndBy parseCir skipWithBreak
+  skipMany $ sep <|> delimiter
+  skipSpace
+  eof
+  return $ DotTfc qubits inputs outputs (concat cir)
+
+parseDotTfc :: String -> Either ParseError DotTfc
+parseDotTfc = parse parseFile ".qc parser"
 
 unJust (Just a) = a
 
-{-
-qS' s = do
-  skipSpaces
-  string "S*"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (S' (unJust (target `elemIndex` s)))
--}
-qT s = do
-  skipSpaces
-  string "T"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (T (unJust (target `elemIndex` s)))
+d2cir :: DotTfc -> (Int, [GS.Gate])
+d2cir (DotTfc q i o glist) = (length q, map g2g glist)
+  where
+    qix = MS.fromList (zip q [0 .. length q - 1])
+    ix p = unJust $ MS.lookup p qix
+    g2g (Gate "x" ps) = GS.X (ix $ head ps)
+    g2g (Gate "X" ps) = GS.X (ix $ head ps)
+    g2g (Gate "z" ps) = GS.Z (ix $ head ps)
+    g2g (Gate "Z" ps) = GS.Z (ix $ head ps)
+    g2g (Gate "s" ps) = GS.S (ix $ head ps)
+    g2g (Gate "S" ps) = GS.S (ix $ head ps)
+    g2g (Gate "H" ps) = GS.H (ix $ head ps)
+    g2g (Gate "T" ps) = GS.T (ix $ head ps)
+    g2g (Gate "not" ps) = GS.X (ix $ head ps)
+    g2g (Gate "cnot" ps) = GS.CX (ix (ps !! 1)) (ix (head ps))
+    g2g (Gate "CNOT" ps) = GS.CX (ix (ps !! 1)) (ix (head ps))
+    g2g (Gate "CX" ps) = GS.CX (ix (ps !! 1)) (ix (head ps))
+    g2g (Gate "tof" ps) = GS.CCX (ix (ps !! 2)) (ix (head ps)) (ix (ps !! 1))
+    g2g (Gate "Tof" ps) = GS.CCX (ix (ps !! 2)) (ix (head ps)) (ix (ps !! 1))
+    g2g (Gate "t3" ps) = GS.CCX (ix (ps !! 2)) (ix (head ps)) (ix (ps !! 1))
+    g2g (Gate "swap" ps) = GS.Swap (ix (ps !! 1)) (ix (head ps))
 
-qX s = do
-  skipSpaces
-  string "X"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (X (unJust (target `elemIndex` s)))
+parseQC :: String -> IO (Int, [GS.Gate])
+parseQC bs = case parseDotTfc bs of
+  Right d -> return $ d2cir d
 
-qNot s = do
-  skipSpaces
-  string "not"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (X (unJust (target `elemIndex` s)))
-
-qZ s = do
-  skipSpaces
-  string "Z"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (Z (unJust (target `elemIndex` s)))
-
-{-
-qT' s = do
-  skipSpaces
-  string "T*"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (T' (unJust (target `elemIndex` s)))
--}
-qH s = do
-  skipSpaces
-  string "H"
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (H (unJust (target `elemIndex` s)))
-
-qCnot1 s = do
-  skipSpaces
-  string "cnot"
-  skipSpaces
-  control <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (Cnot (unJust (target `elemIndex` s)) (unJust (control `elemIndex` s)))
-
-qCnot2 s = do
-  skipSpaces
-  string "Cnot"
-  skipSpaces
-  control <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (Cnot (unJust (target `elemIndex` s)) (unJust (control `elemIndex` s)))
-
-qCnot3 s = do
-  skipSpaces
-  string "CNOT"
-  skipSpaces
-  control <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (CX (unJust (target `elemIndex` s)) (unJust (control `elemIndex` s)))
-
-qtof2 s = do
-  skipSpaces
-  string "tof"
-  skipSpaces
-  control <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (CX (unJust (target `elemIndex` s)) (unJust (control `elemIndex` s)))
-
-qTof s = do
-  skipSpaces
-  string "Tof"
-  skipSpaces
-  control1 <- next_word
-  skipSpaces
-  control2 <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (Toffoli (unJust (target `elemIndex` s)) (unJust (control1 `elemIndex` s)) (unJust (control2 `elemIndex` s)))
-
-qtof s = do
-  skipSpaces
-  string "tof"
-  skipSpaces
-  control1 <- next_word
-  skipSpaces
-  control2 <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (Toffoli (unJust (target `elemIndex` s)) (unJust (control1 `elemIndex` s)) (unJust (control2 `elemIndex` s)))
-
-qCCZ s = do
-  skipSpaces
-  string "Z"
-  skipSpaces
-  control1 <- next_word
-  skipSpaces
-  control2 <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (CCZ (unJust (target `elemIndex` s)) (unJust (control1 `elemIndex` s)) (unJust (control2 `elemIndex` s)))
-
--- qTof4 s = do
---   skipSpaces
---   string "Tof"
---   skipSpaces
---   control1 <- next_word
---   skipSpaces
---   control2 <- next_word
---   skipSpaces
---   control3 <- next_word
---   skipSpaces
---   target <- next_word
---   skipSpaces
---   return (Toffoli (unJust (target `elemIndex` s)) (unJust (control1 `elemIndex` s)) (unJust (control2 `elemIndex` s)) (unJust (control3 `elemIndex` s)))
-
-qCZ s = do
-  skipSpaces
-  string "CZ"
-  skipSpaces
-  control <- next_word
-  skipSpaces
-  target <- next_word
-  skipSpaces
-  return (CZ (unJust (target `elemIndex` s)) (unJust (control `elemIndex` s)))
-
-names_v :: ReadP [String]
-names_v = do
-  char '.'
-  char 'v'
-  skipSpaces
-  str <- many $ satisfy (/= '.')
-  return $ if str /= "BEGIN" then words str else error "parse error, .v line is no good!"
-
-names_v' :: ReadP [String]
-names_v' = do
-  char '.'
-  char 'v'
-  skipSpaces
-  words <$> many (satisfy (\x -> x /= '.' && x /= 'B'))
-
-header :: ReadP [String]
-header = do
-  names_v
-
-qgates :: [String] -> ReadP [Gate]
-qgates s = do
-  g <- qGate s
-  skipSpaces
-  gs <- qgates s <++ return []
-  skipSpaces
-  return (g : gs)
-
-qcir = do
-  s <- names_v'
-  skipSpaces
-  string "BEGIN"
-  skipSpaces
-  gl <- qgates s
-  skipSpaces
-  string "END"
-  return gl
-
-names_v1 :: ReadP [String]
-names_v1 = do
-  char '.'
-  char 'v'
-  skipSpaces
-  words <$> many (satisfy (\x -> x /= '.' && x /= 'B'))
-
-qcir1 = do
-  s <- names_v1
-  string "BEGIN"
-  gl <- many (qGate s)
-  skipSpaces
-  string "END"
-  skipSpaces
-  return gl
-
-parseQC :: String -> IO [Gate]
-parseQC str = do
-  --  str <- readFile $ s
-  let (gl, re) = head $ readP_to_S qcir1 str
-  --  putStrLn str
-  return gl
-
-parseQC2 :: String -> IO (Int, [Gate])
-parseQC2 str = do
---  str <- readFile $ s
-  let (gl,re) = head $ (readP_to_S qcir1) str
-  let n = length $ wiresOfCir gl
-  putStrLn (show gl)
-  return $ (n,gl)
-
-
-
-parseQC' :: String -> IO [Gate]
-parseQC' s = do
-  str <- readFile s
-  let (gl, re) = head $ readP_to_S qcir1 str
-  --  putStrLn str
-  return gl
-
-parseQC'2 :: String -> IO (Int, [Gate])
-parseQC'2 s = do
-  str <- readFile $ s
-  let (gl,re) = head $ (readP_to_S qcir1) str
-  let n = length $ wiresOfCir gl
---  putStrLn str
-  return $ (n,gl)
-
-readQC :: IO String
-readQC = do
-  str <- readFile "qc.qc"
-  let (gl, re) = head $ readP_to_S qcir str
-  return str
+parseQC' :: String -> IO [GS.Gate]
+parseQC' fn = do
+  bs <- readFile fn
+  (p1, p2) <- parseQC bs
+  return p2

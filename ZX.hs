@@ -1,24 +1,20 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module ZX8 where
+module ZX where
 
 --import qualified Data.Map.Strict as MS
 
-import qualified Circuit4 as C
+import qualified Circuit as C
 import Control.Applicative
 import Control.DeepSeq
 import Control.Monad
 import Control.Monad.State
 import Data.Bifunctor
-
 import Data.Function
 import qualified Data.HashMap.Strict as MS
 import qualified Data.HashTable.ST.Basic as HT
 import Data.Hashable
-
-import Data.Ratio
-
 import Data.List
 import Data.Maybe
 import Data.Ratio
@@ -28,10 +24,10 @@ import GHC.Generics
 import GateStruct
 import QCParser
 import QuipperParser
+import qualified Squeeze as S
 import qualified Squeeze as S1
-import qualified Squeeze3 as S
 import System.Random
-import TfcParser2
+import TfcParser
 import qualified ToFile as ToF
 
 id56s :: [Identity]
@@ -251,8 +247,6 @@ mypartition p xs = (l, r)
     l = MS.filter (\x -> x `mod` 2 == 1) xs
     r = MS.filter even xs
 
-  
-
 -- | check equality of identity
 
 -- nt' > 0 &&
@@ -302,18 +296,6 @@ pmod8 :: Int -> Int -> Int
 pmod8 x y = (x + y) `mod` 8
 
 -- | boolean mask
-
-
-  
-
-
-
-
-
-
-
-
-
 expandId :: Identity -> [[Int]] -> [Identity]
 expandId id@(tg, cg) wss =
   [ ( MS.fromList (map (Data.Bifunctor.first f) (MS.toList tg)),
@@ -361,7 +343,6 @@ ngads n =
               else b
     )
     MS.empty
-
 
 -- | randomlistN g n m generate n distinct random numbers from 0 .. m-1
 randomlistN :: StdGen -> Int -> Int -> ([Int], StdGen)

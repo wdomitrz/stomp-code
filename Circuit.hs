@@ -1,4 +1,4 @@
-module Circuit4 where
+module Circuit where
 
 import Control.Applicative
 import Control.Monad

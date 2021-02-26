@@ -4,7 +4,7 @@ module Main where
 
 --import qualified ZX2 as ZX2
 
-import qualified Circuit4 as C
+import qualified Circuit as C
 import Control.Applicative
 import Control.Monad
 import Control.Monad.State
@@ -17,7 +17,7 @@ import qualified Data.Set as Set
 import Fast
 import qualified Fast
 import GateStruct
-import QCParser2
+import QCParser
 import Quipper
 import Quipper.Libraries.QuipperASCIIParser
 import QuipperParser
@@ -25,11 +25,11 @@ import System.CPUTime
 import System.Environment
 import System.IO
 import System.Random
-import TfcParser2
+import TfcParser
 import qualified ToFile as ToF
 import qualified ToQC as QC
 import Todd
-import qualified ZX8 as ZX
+import qualified ZX as ZX
 
 --import Squeeze2
 

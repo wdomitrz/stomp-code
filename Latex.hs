@@ -1,6 +1,6 @@
 module Latex where
 
-import Circuit4b
+import Circuit
 import Control.Monad.State
 import Data.List
 import Data.Map (Map)
